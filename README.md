@@ -1,49 +1,180 @@
-# mlfs-book
-O'Reilly book - Building Machine Learning Systems with a feature store: batch, real-time, and LLMs
+# Lab 1: Air Quality Prediction System for Glasgow
 
+Complete air quality prediction pipeline using XGBoost and Hopsworks to forecast PM2.5 levels across multiple sensors in Glasgow.
 
-## ML System Examples
+## Table of Contents
+- [Overview](#overview)
+- [Implementation](#implementation)
+  - [Part 1: Basic Pipeline Setup](#part-1-basic-pipeline-setup)
+  - [Part 2: Single-Sensor Model with Temporal Features](#part-2-single-sensor-model-with-temporal-features)
+  - [Part 3: Multi-Sensor Prediction System](#part-3-multi-sensor-prediction-system)
+- [Results](#results)
+- [Tech Stack](#tech-stack)
 
+## Overview
 
-[Dashboards for Example ML Systems](https://featurestorebook.github.io/mlfs-book/)
+This lab progressively builds air quality prediction capabilities:
+1. **Basic pipeline** with automated dashboard
+2. **Enhanced single-sensor model** using 3-day lagged features
+3. **Multi-sensor forecasting system** predicting 5 days ahead for 9 Glasgow sensors
 
+## Implementation
 
+### Part 1: Basic Pipeline Setup
 
+Ran notebooks 1-4 to establish the foundation:
+- Created feature pipelines for air quality and weather data
+- Built initial prediction model
+- Set up automated dashboard using GitHub Actions
+- Configured visualization and monitoring
 
-# Run Air Quality Tutorial
+### Part 2: Single-Sensor Model with Temporal Features
 
-See [tutorial instructions here](https://docs.google.com/document/d/1YXfM1_rpo1-jM-lYyb1HpbV9EJPN6i1u6h2rhdPduNE/edit?usp=sharing)
-    # Create a conda or virtual environment for your project
-    conda create -n book 
-    conda activate book
+**Goal**: Improve prediction accuracy by incorporating historical context
 
-    # Install 'uv' and 'invoke'
-    pip install invoke dotenv
+**What we did**:
+- Added lagged PM2.5 values from the previous 3 days as features
+- Trained XGBoost model on single sensor data from Glasgow
+- Evaluated performance against baseline model
 
-    # 'invoke install' installs python dependencies using uv and requirements.txt
-    invoke install
+**Why it works**: Air quality today is strongly influenced by recent days, so giving the model this temporal context improves predictions.
 
+**Results**: Noticeable performance improvement over the baseline (which already had decent performance).
 
-## PyInvoke
+### Part 3: Multi-Sensor Prediction System
 
-    invoke aq-backfill
-    invoke aq-features
-    invoke aq-train
-    invoke aq-inference
-    invoke aq-clean
+The main component of this lab - predicting air quality for all 9 sensors in Glasgow over the next 5 days.
 
+#### Step 1: Create New Feature Groups
 
+Created and uploaded two feature groups to Hopsworks:
 
-## Feldera
+**Feature Group 1: Multi-Sensor Air Quality Data**
+- PM2.5 measurements
+- City (Glasgow)
+- Street/sensor location
+- Date
+- Coverage: All 9 sensors
 
+**Feature Group 2: Weather Forecasts**
+- Future weather data (5-day horizon)
+- Used for making forward predictions
 
-pip install feldera ipython-secrets
-sudo apt-get install python3-secretstorage
-sudo apt-get install gnome-keyring 
+#### Step 2: Train Multi-Sensor Model
 
-mkdir -p /tmp/c.app.hopsworks.ai
-ln -s  /tmp/c.app.hopsworks.ai ~/hopsworks
-docker run -p 8080:8080 \
-  -v ~/hopsworks:/tmp/c.app.hopsworks.ai \
-  --tty --rm -it ghcr.io/feldera/pipeline-manager:latest
+Trained a new XGBoost model with these characteristics:
+- **Training data**: Lagged PM2.5 values (3-day window) from ALL 9 sensors
+- **Key difference from Part 2**: This model trains on combined data from all sensors, not just one
 
+**Bonus evaluation** (not required but helpful):
+- Evaluated model performance across all sensors
+- Generated historical performance plots for each sensor location
+- Helped us understand how the model behaves across different locations
+
+#### Step 3: Generate 5-Day Forecasts
+
+This was the tricky part - predicting multiple days into the future requires using our own predictions as features.
+
+**The prediction process**:
+
+1. **Get weather forecasts**: Extract weather data where date > today (5 days of forecasts)
+
+2. **Initialize with real data**: For each sensor, grab the 3 most recent PM2.5 measurements
+
+3. **Iterative prediction loop**:
+```
+   For each sensor:
+       pm25_window = [3 most recent real PM2.5 values]
+       
+       For each forecast day (1 to 5):
+           # Make prediction using current window + weather forecast
+           prediction = model.predict(pm25_window + weather_data + sensor_location)
+           
+           # Slide the window: remove oldest, add newest predicted value
+           pm25_window.pop(0)  # Remove oldest value
+           pm25_window.append(prediction)  # Add newly predicted value
+           
+       Save all predictions for this sensor
+```
+
+**How the sliding window works**:
+- Day 1 prediction: Uses 3 real historical values
+- Day 2 prediction: Uses 2 real values + 1 predicted value (day 1)
+- Day 3 prediction: Uses 1 real value + 2 predicted values (days 1-2)
+- Day 4 prediction: Uses 3 predicted values (days 1-3)
+- Day 5 prediction: Uses 3 predicted values (days 2-4)
+
+4. **Repeat for all sensors**: Ran this entire process for each of Glasgow's 9 monitoring locations
+
+#### Step 4: Visualize Results
+
+Created plots showing:
+- Historical performance for each sensor
+- 5-day forecast predictions for each sensor
+- Comparison of patterns across different locations
+
+## Results
+
+### Model Performance
+- Single-sensor model with lags: Clear improvement over baseline
+- Multi-sensor model: Consistent performance across all 9 locations
+- Historical vs predicted values show similar patterns (good indicator of model stability)
+
+### Key Observations
+
+**Similar patterns across time**: The forecasted values follow similar trends to historical data, suggesting the model has learned meaningful patterns rather than just memorizing noise.
+
+**Cross-sensor correlation**: Predictions across different sensors show some correlation because:
+- All sensors use the same weather forecast data
+- They're all in the same city (Glasgow)
+- Weather is a primary driver of PM2.5 levels
+- Local variations exist but regional patterns dominate
+
+**Autoregressive behavior**: As we predict further into the future, we're increasingly relying on our own predictions as features. This is why the sliding window approach is crucial.
+
+## Tech Stack
+
+- **Python**: Core implementation language
+- **XGBoost**: Machine learning model for predictions
+- **Hopsworks**: Feature store for data management and model registry
+- **Pandas/NumPy**: Data manipulation and processing
+- **Matplotlib/Seaborn**: Visualization
+- **GitHub Actions**: Automated dashboard deployment
+
+## Project Structure
+```
+lab1/
+├── notebooks/
+│   ├── 1_pipeline_setup.ipynb
+│   ├── 2_feature_engineering.ipynb
+│   ├── 3_model_training.ipynb
+│   └── 4_predictions.ipynb
+├── feature_groups/
+│   ├── air_quality_multi_sensor/
+│   └── weather_forecasts/
+├── models/
+│   ├── single_sensor_with_lags.pkl
+│   └── multi_sensor_model.pkl
+└── dashboard/
+    └── visualizations/
+```
+
+## Key Takeaways
+
+1. **Temporal features matter**: Adding 3-day lags significantly improved single-sensor predictions
+
+2. **Scaling to multiple sensors**: Training on all sensors together allows us to capture shared patterns while maintaining location-specific predictions
+
+3. **Autoregressive forecasting**: Using predicted values as features for future predictions works but requires careful implementation with sliding windows
+
+4. **Weather dependency**: Since all sensors share weather data, their predictions naturally correlate at the regional level
+
+5. **Prediction uncertainty**: Further into the future = more reliance on predicted (not real) lagged values = potentially higher uncertainty
+
+## Future Improvements
+
+- Add confidence intervals for predictions
+- Incorporate additional features (traffic, industrial activity, time of day)
+- Experiment with longer or shorter lag windows
+- Test ensemble methods combining multiple models
+- Implement model retraining pipeline as new data arrives
